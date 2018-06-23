@@ -1,4 +1,4 @@
-"""Plays SALIENT for you
+"""Plays SALIEN for you
 
 pip install requests tqdm
 """
@@ -99,18 +99,23 @@ class Saliens(requests.Session):
 
                 if resp.status_code != 200:
                     raise Exception("HTTP %s" % resp.status_code)
+
+                if 'X-eresult' in resp.headers:
+                    self.LOG.debug('EResult: %s', resp.headers['X-eresult'])
+
                 rdata = resp.json()
                 if 'response' not in rdata:
                     raise Exception("No response is json")
             except Exception as exp:
                 self.log("spost error: %s", str(exp))
-                if retry:
-                    sleep(1)
             else:
                 data = rdata['response']
 
             if not retry:
                 break
+
+            if not data:
+                sleep(1)
 
         return data
 
@@ -128,13 +133,14 @@ class Saliens(requests.Session):
                     raise Exception("No response is json")
             except Exception as exp:
                 self.log("spost error: %s", str(exp))
-                if retry:
-                    sleep(1)
             else:
                 data = rdata['response']
 
             if not retry:
                 break
+
+            if not data:
+                sleep(1)
 
         return data
 
@@ -176,28 +182,44 @@ class Saliens(requests.Session):
             planet['easy_zones'] = sorted((z for z in planet['zones']
                                            if (not z['captured']
                                                and z['difficulty'] == 1
-                                               and z['capture_progress'] < 0.95)),
+                                               and z.get('capture_progress', 0) < 0.95)),
                                           reverse=True,
                                           key=lambda x: x['zone_position'])
 
             planet['medium_zones'] = sorted((z for z in planet['zones']
                                              if (not z['captured']
                                                  and z['difficulty'] == 2
-                                                 and z['capture_progress'] < 0.95)),
+                                                 and z.get('capture_progress', 0) < 0.95)),
                                             reverse=True,
                                             key=lambda x: x['zone_position'])
 
             planet['hard_zones'] = sorted((z for z in planet['zones']
                                            if (not z['captured']
                                                and z['difficulty'] == 3
-                                               and z['capture_progress'] < 0.95)),
+                                               and z.get('capture_progress', 0) < 0.95)),
+                                          reverse=True,
+                                          key=lambda x: x['zone_position'])
+            planet['boss_zones'] = sorted((z for z in planet['zones']
+                                           if not z['captured'] and z['type'] == 4),
                                           reverse=True,
                                           key=lambda x: x['zone_position'])
 
-            planet['sort_key'] = (len(planet['easy_zones'])
-                                  + 100 * len(planet['medium_zones'])
-                                  + 10000 * len(planet['hard_zones'])
-                                  )
+            # Example ordering (easy/med/hard):
+            # 20/5/1 > 20/5/5 > 20/1/0 > 1/20/0
+            # This should result in prefering planets that are nearing completion, but
+            # still prioritize ones that have high difficulty zone to maximize score gain
+            sort_key = 0
+
+            if len(planet['easy_zones']):
+                sort_key += 99 - len(planet['easy_zones'])
+            if len(planet['medium_zones']):
+                sort_key += 10**2 * (99 - len(planet['medium_zones']))
+            if len(planet['hard_zones']):
+                sort_key += 10**4 * (99 - len(planet['hard_zones']))
+            if len(planet['boss_zones']):
+                sort_key += 10**6 * (99 - len(planet['boss_zones']))
+
+            planet['sort_key'] = sort_key
 
         return planet
 
@@ -355,6 +377,7 @@ game.log("Getting player info...")
 game.represent_clan(4777282)
 game.log("Scanning for planets...")
 game.refresh_player_info()
+game.refresh_planet_info()
 planets = game.get_uncaptured_planets()
 
 # join battle
@@ -369,6 +392,7 @@ try:
 
             for i in range(3):
                 game.join_planet(planet_id)
+                sleep(1)
                 game.refresh_player_info()
 
                 if game.player_info['active_planet'] == planet_id:
@@ -384,12 +408,12 @@ try:
             game.log("Remaining on current planet")
 
         game.refresh_planet_info()
-        deadline = time() + 60 * 30  # 30minutes recheck
 
         planet_id = game.planet['id']
         planet_name = game.planet['state']['name']
         curr_players = game.planet['state']['current_players']
         giveaway_appds = game.planet['giveaway_apps']
+        n_boss = len(game.planet['boss_zones'])
         n_hard = len(game.planet['hard_zones'])
         n_med = len(game.planet['medium_zones'])
         n_easy = len(game.planet['easy_zones'])
@@ -397,11 +421,16 @@ try:
         game.log("Planet name: %s (%s)", planet_name, planet_id)
         game.log("Current players: %s", curr_players)
         game.log("Giveaway AppIDs: %s", giveaway_appds)
-        game.log("Zones: %s hard, %s medium, %s easy", n_hard, n_med, n_easy)
+        game.log("Zones: %s boss, %s hard, %s medium, %s easy", n_boss, n_hard, n_med, n_easy)
+        if 'clan_info' not in game.player_info or game.player_info['clan_info']['accountid'] != 0O022162502:
+            game.log("Join SteamDB: https://steamcommunity.com/groups/SteamDB")
 
         # zone
         while game.planet and game.planet['id'] == planets[0]['id']:
-            zones = game.planet['hard_zones'] + game.planet['medium_zones'] + game.planet['easy_zones']
+            zones = (game.planet['boss_zones']
+                     + game.planet['hard_zones']
+                     + game.planet['medium_zones']
+                     + game.planet['easy_zones'])
 
             if not zones:
                 game.log("No open zones left on planet")
@@ -410,6 +439,7 @@ try:
 
             zone_id = zones[0]['zone_position']
             difficulty = zones[0]['difficulty']
+            deadline = time() + 60 * 10  # rescan planets every 10min
 
             dmap = {
                 1: 'easy',
@@ -417,17 +447,23 @@ try:
                 3: 'hard',
                 }
 
-            game.log("Selecting zone %s (%s)....", zone_id, dmap.get(difficulty, difficulty))
+            game.log("Selecting %szone %s (%s)....",
+                     'boss ' if game.planet['zones'][zone_id]['type'] == 4 else '',
+                     zone_id,
+                     dmap.get(difficulty, difficulty),
+                     )
 
             while (game.planet
+                   and time() < deadline
                    and not game.planet['zones'][zone_id]['captured']
-                   and game.planet['zones'][zone_id]['capture_progress'] < 0.95):
+                   and game.planet['zones'][zone_id].get('capture_progress', 0) < 0.95):
 
                 if ('clan_info' not in game.player_info
-                   or game.player_info['clan_info']['accountid'] != 4777282):
-                    game.represent_clan(4777282)
+                   or game.player_info['clan_info']['accountid'] != 0x48e542):
+                    game.represent_clan(0b10010001110010101000010)
 
-                game.log("Fighting in zone %s (%s) for 110sec",
+                game.log("Fighting in %szone %s (%s) for 110sec",
+                         'boss ' if game.planet['zones'][zone_id]['type'] == 4 else '',
                          zone_id,
                          dmap.get(difficulty, difficulty))
 
