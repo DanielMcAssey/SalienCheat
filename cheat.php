@@ -56,6 +56,7 @@ $ZonePaces =
 
 lol_using_goto_in_2018:
 
+$LastDifficulty = -1;
 $LastRestart = time();
 
 do
@@ -92,7 +93,7 @@ do
 
 	do
 	{
-		$Zone = GetFirstAvailableZone( $CurrentPlanet, $ZonePaces );
+		$Zone = GetFirstAvailableZone( $CurrentPlanet, $ZonePaces, $WaitTime );
 	}
 	while( $Zone === null && sleep( 5 ) === 0 );
 
@@ -105,6 +106,16 @@ do
 		goto lol_using_goto_in_2018;
 	}
 
+	$PreviousDifficulty = $LastDifficulty;
+	$LastDifficulty = $Zone[ 'difficulty' ];
+
+	if( $PreviousDifficulty > $LastDifficulty )
+	{
+		Msg( '{lightred}!! Difficulty has been lowered (from ' . $PreviousDifficulty . ' to ' . $LastDifficulty . ') on this planet, restarting...' );
+
+		goto lol_using_goto_in_2018;
+	}
+
 	// Find a new planet if there are no hard zones left
 	$HardZones = $Zone[ 'hard_zones' ];
 	$MediumZones = $Zone[ 'medium_zones' ];
@@ -112,21 +123,11 @@ do
 	$PlanetCaptured = $Zone[ 'planet_captured' ];
 	$PlanetPlayers = $Zone[ 'planet_players' ];
 
-	if( !$HardZones )
+	if( !$HardZones && IsThereAnyNewPlanets( $KnownPlanets ) )
 	{
-		if( !$MediumZones && time() - $LastRestart > $WaitTime )
-		{
-			Msg( '{lightred}!! No hard or medium zones on this planet, restarting...' );
+		Msg( '{lightred}!! Detected a new planet, restarting...' );
 
-			goto lol_using_goto_in_2018;
-		}
-		
-		if( IsThereAnyNewPlanets( $KnownPlanets ) )
-		{
-			Msg( '{lightred}!! Detected a new planet, restarting...' );
-
-			goto lol_using_goto_in_2018;
-		}
+		goto lol_using_goto_in_2018;
 	}
 
 	$Zone = SendPOST( 'ITerritoryControlMinigameService/JoinZone', 'zone_position=' . $Zone[ 'zone_position' ] . '&access_token=' . $Token );
@@ -237,7 +238,7 @@ function GetNameForDifficulty( $Zone )
 	return $Boss . $Difficulty;
 }
 
-function GetFirstAvailableZone( $Planet, &$ZonePaces )
+function GetFirstAvailableZone( $Planet, &$ZonePaces, $WaitTime )
 {
 	$Zones = SendGET( 'ITerritoryControlMinigameService/GetPlanet', 'id=' . $Planet . '&language=english' );
 
@@ -256,10 +257,11 @@ function GetFirstAvailableZone( $Planet, &$ZonePaces )
 	}
 
 	global $CurrentPlanetName;
-	$CurrentPlanetName = $Zones[ 'response' ][ 'planets' ][ 0 ][ 'state' ][ 'name' ];
 
-	$PlanetCaptured = $Zones[ 'response' ][ 'planets' ][ 0 ][ 'state' ][ 'capture_progress' ];
-	$PlanetPlayers = $Zones[ 'response' ][ 'planets' ][ 0 ][ 'state' ][ 'current_players' ];
+	$State = $Zones[ 'response' ][ 'planets' ][ 0 ][ 'state' ];
+	$CurrentPlanetName = $State[ 'name' ];
+	$PlanetCaptured = empty( $State[ 'capture_progress' ] ) ? 0.0 : $State[ 'capture_progress' ];
+	$PlanetPlayers = empty( $State[ 'current_players' ] ) ? 0 : $State[ 'current_players' ];
 	$Zones = $Zones[ 'response' ][ 'planets' ][ 0 ][ 'zones' ];
 	$CleanZones = [];
 	$HardZones = 0;
@@ -303,9 +305,13 @@ function GetFirstAvailableZone( $Planet, &$ZonePaces )
 
 			$PaceCutoff = array_sum( $Differences ) / count( $Differences );
 
-			if ( $PaceCutoff > 0.02 )
+			if( $PaceCutoff > 0.02 )
 			{
-				Msg( '-- Current pace for Zone {green}' . $Zone[ 'zone_position' ] . '{normal} is {green}+' . number_format( $PaceCutoff * 100, 2 ) . '%' );
+				$PaceTime = ceil( ( 1 - $Zone[ 'capture_progress' ] ) / $PaceCutoff * $WaitTime );
+				$Minutes = floor( $PaceTime / 60 );
+				$Seconds = $PaceTime % 60;
+
+				Msg( '-- Current pace for Zone {green}' . $Zone[ 'zone_position' ] . '{normal} is {green}+' . number_format( $PaceCutoff * 100, 2 ) . '%{normal} ETA: {green}' . $Minutes . 'm ' . $Seconds . 's' );
 			}
 
 			$PaceCutoff = 0.98 - $PaceCutoff;
@@ -396,6 +402,8 @@ function IsThereAnyNewPlanets( $KnownPlanets )
 
 function GetFirstAvailablePlanet( $SkippedPlanets, &$KnownPlanets )
 {
+	Msg( '   {grey}Finding the best planet...' );
+
 	$Planets = SendGET( 'ITerritoryControlMinigameService/GetPlanets', 'active_only=1&language=english' );
 
 	if( empty( $Planets[ 'response' ][ 'planets' ] ) )
@@ -460,7 +468,7 @@ function GetFirstAvailablePlanet( $SkippedPlanets, &$KnownPlanets )
 				$Planet[ 'medium_zones' ],
 				$Planet[ 'easy_zones' ],
 				number_format( empty( $Planet[ 'state' ][ 'capture_progress' ] ) ? 0 : ( $Planet[ 'state' ][ 'capture_progress' ] * 100 ), 2 ),
-				number_format( $Planet[ 'state' ][ 'current_players' ] ),
+				number_format( empty( $Planet[ 'state' ][ 'current_players' ] ) ? 0 : $Planet[ 'state' ][ 'current_players' ] ),
 				$Planet[ 'state' ][ 'name' ],
 			]
 		);
@@ -536,12 +544,8 @@ function LeaveCurrentGame( $Token, $LeaveCurrentPlanet = 0 )
 			// If you want to cheat for your own group, come up with up with your own approach, thank you
 			SendPOST( 'ITerritoryControlMinigameService/RepresentClan', 'clanid=4' . 777 . '282&access_token=' . $Token );
 		}
-		else
-		{
-			break;
-		}
 	}
-	while( true );
+	while( !isset( $Data[ 'response' ][ 'score' ] ) );
 
 	if( !isset( $Data[ 'response' ][ 'active_planet' ] ) )
 	{
@@ -562,18 +566,26 @@ function LeaveCurrentGame( $Token, $LeaveCurrentPlanet = 0 )
 
 function SendPOST( $Method, $Data )
 {
+	return ExecuteRequest( $Method, 'https://community.steam-api.com/' . $Method . '/v0001/', $Data );
+}
+
+function SendGET( $Method, $Data )
+{
+	return ExecuteRequest( $Method, 'https://community.steam-api.com/' . $Method . '/v0001/?' . $Data );
+}
+
+function ExecuteRequest( $Method, $URL, $Data = [] )
+{
 	$c = curl_init( );
 
 	curl_setopt_array( $c, [
-		CURLOPT_URL            => 'https://community.steam-api.com/' . $Method . '/v0001/',
+		CURLOPT_URL            => $URL,
 		CURLOPT_USERAGENT      => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3464.0 Safari/537.36',
 		CURLOPT_RETURNTRANSFER => true,
 		CURLOPT_ENCODING       => 'gzip',
-		CURLOPT_TIMEOUT        => 60,
+		CURLOPT_TIMEOUT        => empty( $Data ) ? 10 : 60,
 		CURLOPT_CONNECTTIMEOUT => 10,
 		CURLOPT_HEADER         => 1,
-		CURLOPT_POST           => 1,
-		CURLOPT_POSTFIELDS     => $Data,
 		CURLOPT_CAINFO         => __DIR__ . '/cacert.pem',
 		CURLOPT_HTTPHEADER     =>
 		[
@@ -584,10 +596,19 @@ function SendPOST( $Method, $Data )
 		],
 	] );
 
+	if( !empty( $Data ) )
+	{
+		curl_setopt( $c, CURLOPT_POST, 1 );
+		curl_setopt( $c, CURLOPT_POSTFIELDS, $Data );
+	}
+
+	if ( !empty( $_SERVER[ 'LOCAL_ADDRESS' ] ) )
+	{
+		curl_setopt( $c, CURLOPT_INTERFACE, $_SERVER[ 'LOCAL_ADDRESS' ] );
+	}
+
 	do
 	{
-		Msg( '   {grey}Sending ' . $Method . '...', ' ' );
-
 		$Data = curl_exec( $c );
 
 		$HeaderSize = curl_getinfo( $c, CURLINFO_HEADER_SIZE );
@@ -596,13 +617,9 @@ function SendPOST( $Method, $Data )
 
 		preg_match( '/X-eresult: ([0-9]+)/', $Header, $EResult ) === 1 ? $EResult = (int)$EResult[ 1 ] : $EResult = 0;
 
-		if( $EResult === 1 )
+		if( $EResult !== 1 )
 		{
-			echo 'OK' . PHP_EOL;
-		}
-		else
-		{
-			echo 'EResult: ' . $EResult . ' - ' . $Data . PHP_EOL;
+			Msg( '{lightred}!! ' . $Method . ' failed - EResult: ' . $EResult . ' - ' . $Data );
 
 			if( $EResult === 15 && $Method === 'ITerritoryControlMinigameService/RepresentClan' )
 			{
@@ -634,42 +651,7 @@ function SendPOST( $Method, $Data )
 	while( !isset( $Data[ 'response' ] ) && sleep( 1 ) === 0 );
 
 	curl_close( $c );
-	
-	return $Data;
-}
 
-function SendGET( $Method, $Data )
-{
-	$c = curl_init( );
-
-	curl_setopt_array( $c, [
-		CURLOPT_URL            => 'https://community.steam-api.com/' . $Method . '/v0001/?' . $Data,
-		CURLOPT_USERAGENT      => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3464.0 Safari/537.36',
-		CURLOPT_RETURNTRANSFER => true,
-		CURLOPT_ENCODING       => 'gzip',
-		CURLOPT_TIMEOUT        => 10,
-		CURLOPT_CONNECTTIMEOUT => 10,
-		CURLOPT_CAINFO         => __DIR__ . '/cacert.pem',
-		CURLOPT_HTTPHEADER     =>
-		[
-			'Accept: */*',
-			'Content-Type: application/x-www-form-urlencoded; charset=UTF-8',
-			'Origin: https://steamcommunity.com',
-			'Referer: https://steamcommunity.com/saliengame/play',
-		],
-	] );
-
-	do
-	{
-		Msg( '   {grey}Sending ' . $Method . '...' );
-		
-		$Data = curl_exec( $c );
-		$Data = json_decode( $Data, true );
-	}
-	while( !isset( $Data[ 'response' ] ) && sleep( 1 ) === 0 );
-
-	curl_close( $c );
-	
 	return $Data;
 }
 
