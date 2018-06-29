@@ -8,8 +8,6 @@
 
 ## PHP
 
-📣 [Check this reddit thread for a complete guide and troubleshooting](https://redd.it/8t5w8v)
-
 ### Windows
 
 1. [Download this script](https://github.com/SteamDatabase/SalienCheat/archive/master.zip)
@@ -23,7 +21,7 @@
 2. Launch Terminal and run the script: `php downloads/cheat.php`
 
 You can also provide token directly in CLI, to ease running multiple accounts:
-```
+```bash
 php cheat.php token1
 php cheat.php token2
 ```
@@ -34,6 +32,12 @@ php cheat.php token2
 2. You know what you are doing. 🐧
 
 ## Python
+
+### Windows
+
+1. [Download this script](https://github.com/SteamDatabase/SalienCheat/archive/master.zip)
+2. Extract it into a new folder
+3. Click `python-cheat.bat` and follow instructions
 
 ### Linux/Cygwin
 
