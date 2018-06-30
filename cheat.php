@@ -1,7 +1,11 @@
 #!/usr/bin/env php
 <?php
 
+Msg( "{background-blue}Welcome to SalienCheat for SteamDB" );
+
 set_time_limit( 0 );
+error_reporting( -1 );
+ini_set( 'display_errors', '1' );
 
 if( !file_exists( __DIR__ . '/cacert.pem' ) )
 {
@@ -41,7 +45,12 @@ else
 		$Token = $ParsedToken[ 'token' ];
 		$AccountID = GetAccountID( $ParsedToken[ 'steamid' ] );
 
-		Msg( 'Your SteamID is ' . $ParsedToken[ 'steamid' ] . ' - AccountID is ' . $AccountID );
+		Msg( 'Your SteamID is {teal}' . $ParsedToken[ 'steamid' ] . '{normal} - AccountID is {teal}' . $AccountID );
+
+		if( $AccountID == 0 && $ParsedToken[ 'steamid' ] > 0 )
+		{
+			Msg( '{lightred}Looks like you are using 32bit PHP. Try enabling "gmp" module for correct accountid calculation.' );
+		}
 	}
 
 	unset( $ParsedToken );
@@ -53,6 +62,9 @@ if( strlen( $Token ) !== 32 )
 	exit( 1 );
 }
 
+$LocalScriptHash = sha1( trim( file_get_contents( __FILE__ ) ) );
+Msg( '{teal}File hash is ' . substr( $LocalScriptHash, 0, 8 ) );
+
 if( isset( $_SERVER[ 'IGNORE_UPDATES' ] ) && (bool)$_SERVER[ 'IGNORE_UPDATES' ] )
 {
 	$UpdateCheck = false;
@@ -60,7 +72,6 @@ if( isset( $_SERVER[ 'IGNORE_UPDATES' ] ) && (bool)$_SERVER[ 'IGNORE_UPDATES' ] 
 else
 {
 	$UpdateCheck = true;
-	$LocalScriptHash = sha1( trim( file_get_contents( __FILE__ ) ) );
 	$RepositoryScriptETag = '';
 	$RepositoryScriptHash = GetRepositoryScriptHash( $RepositoryScriptETag, $LocalScriptHash );
 }
@@ -69,7 +80,10 @@ else
 $DisableColors = !(
 	( function_exists( 'sapi_windows_vt100_support' ) && sapi_windows_vt100_support( STDOUT ) ) ||
 	( function_exists( 'stream_isatty' ) && stream_isatty( STDOUT ) ) ||
-	( function_exists( 'posix_isatty' ) && posix_isatty( STDOUT ) )
+	( function_exists( 'posix_isatty' ) && posix_isatty( STDOUT ) ) ||
+	( false !== getenv( 'ANSICON' ) ) ||
+	( 'ON' === getenv( 'ConEmuANSI' ) ) ||
+	( substr( getenv( 'TERM' ), 0, 5 ) === 'xterm' )
 );
 
 if( isset( $_SERVER[ 'DISABLE_COLORS' ] ) )
@@ -85,8 +99,6 @@ $OldScore = 0;
 $LastKnownPlanet = 0;
 $BestPlanetAndZone = 0;
 $PreferLowZones = 0;
-
-Msg( "{background-blue}Welcome to SalienCheat for SteamDB" );
 
 if( ini_get( 'precision' ) < 18 )
 {
@@ -245,7 +257,7 @@ do
 
 				Msg(
 					( $IsThisMe ? '{green}@@' : '  ' ) .
-					' %-20s - HP: {yellow}%6s' . $DefaultColor  . ' / %6s - Score Gained: {yellow}%10s' . $DefaultColor,
+					' %-20s - HP: {yellow}%6s' . $DefaultColor  . ' / %6s - XP Gained: {yellow}%10s' . $DefaultColor,
 					PHP_EOL,
 					[
 						substr( preg_replace( $RegMask, '', $Player[ 'name' ] ), 0, 20 ),
@@ -272,16 +284,16 @@ do
 				continue;
 			}
 
-			Msg( '@@ Boss HP: {green}' . number_format( $Data[ 'response' ][ 'boss_status' ][ 'boss_hp' ] ) . '{normal} / {lightred}' .  number_format( $Data[ 'response' ][ 'boss_status' ][ 'boss_max_hp' ] ) . '{normal} - Lasers: {yellow}' . $Data[ 'response' ][ 'num_laser_uses' ] . '{normal} - Team Heals: {green}' . $Data[ 'response' ][ 'num_team_heals' ] );
-
 			if( $MyPlayer !== null )
 			{
-				Msg( '@@ Start: ' . number_format( $MyPlayer[ 'score_on_join' ] ) . ' (L' . $MyPlayer[ 'level_on_join' ] . ') - Current: ' . number_format( $MyPlayer[ 'score_on_join' ] + $MyPlayer[ 'xp_earned' ] ) . ' (' . ( $MyPlayer[ 'level_on_join' ] != $MyPlayer[ 'new_level' ] ? '{lightred}' : '' ) . 'L' . $MyPlayer[ 'new_level' ] );
+				Msg( '@@ Started XP: ' . number_format( $MyPlayer[ 'score_on_join' ] ) . ' {teal}(L' . $MyPlayer[ 'level_on_join' ] . '){normal} - Current XP: {yellow}' . number_format( $MyPlayer[ 'score_on_join' ] + $MyPlayer[ 'xp_earned' ] ) . ' ' . ( $MyPlayer[ 'level_on_join' ] != $MyPlayer[ 'new_level' ] ? '{green}' : '{teal}' ) . '(L' . $MyPlayer[ 'new_level' ] . ')' );
 			}
+
+			Msg( '@@ Boss HP: {green}' . number_format( $Data[ 'response' ][ 'boss_status' ][ 'boss_hp' ] ) . '{normal} / {lightred}' .  number_format( $Data[ 'response' ][ 'boss_status' ][ 'boss_max_hp' ] ) . '{normal} - Lasers: {yellow}' . $Data[ 'response' ][ 'num_laser_uses' ] . '{normal} - Team Heals: {green}' . $Data[ 'response' ][ 'num_team_heals' ] );
 
 			echo PHP_EOL;
 		}
-		while( sleep( 5 ) === 0 );
+		while( BossSleep( $c ) );
 
 		continue;
 	}
@@ -411,6 +423,20 @@ do
 }
 while( true );
 
+function BossSleep( $c )
+{
+	$SkippedLagTime = curl_getinfo( $c, CURLINFO_TOTAL_TIME ) - curl_getinfo( $c, CURLINFO_STARTTRANSFER_TIME );
+	$SkippedLagTime -= fmod( $SkippedLagTime, 0.1 );
+	$LagAdjustedWaitTime = 5 - $SkippedLagTime;
+
+	if( $LagAdjustedWaitTime > 0 )
+	{
+		usleep( $LagAdjustedWaitTime * 1000000 );
+	}
+
+	return true;
+}
+
 function CheckGameVersion( $Data )
 {
 	global $GameVersion;
@@ -539,8 +565,8 @@ function GetPlanetState( $Planet, &$ZonePaces, $PreferLowZones, $WaitTime )
 			$BossZones[] = $Zone;
 		}
 
-		// Skip zone 0 if it's not a boss and has no capture progress, since it's currently not allowing joins on new planets.
-		if ( $Zone[ 'zone_position' ] == 0 && $Zone[ 'capture_progress' ] == 0 )
+		// Skip zone 0 if it's not a boss, since it's currently not allowing joins on new planets.
+		if ( $Zone[ 'zone_position' ] == 0 )
 		{
 			continue;
 		}
@@ -933,7 +959,7 @@ function ExecuteRequest( $Method, $URL, $Data = [] )
 
 				sleep( 10 );
 			}
-			else if( $EResult === 11 ) // EResult.InvalidState
+			else if( $EResult === 11 || $EResult === 27 ) // EResult.InvalidState || EResult.Expired
 			{
 				global $LastKnownPlanet;
 				$LastKnownPlanet = 0;
