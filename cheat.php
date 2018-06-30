@@ -136,7 +136,7 @@ do
 		// So please don't change this and let's get this mini game over with
 		if( $Data[ 'response' ][ 'level' ] >= 0b10000 )
 		{
-			$RandomizeZone = 1;
+			$RandomizeZone = 0;
 
 			Msg( '{yellow}-- You will be joining random zones to reduce Steam server load and help capture planets faster' );
 		}
@@ -431,7 +431,7 @@ do
 
 		if( $Data[ 'new_level' ] >= 0b10000 )
 		{
-			$RandomizeZone = 1;
+			$RandomizeZone = 0;
 		}
 	}
 }
