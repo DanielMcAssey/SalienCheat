@@ -205,7 +205,7 @@ do
 			$Time = microtime( true );
 			$UseHeal = 0;
 			// Do more damage in hopes of getting a harder boss next time
-			$DamageToBoss = $WaitingForPlayers ? 0 : mt_rand( 1, 40 );
+			$DamageToBoss = $WaitingForPlayers ? 0 : mt_rand( 20, 40 );
 			$DamageTaken = 0;
 
 			if( $Time >= $NextHeal )
